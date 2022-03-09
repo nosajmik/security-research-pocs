@@ -14,6 +14,52 @@ See the License for the specific language governing permissions and
 limitations under the License.
 #}
 
+//////////////////////////////////////////////////
+//            CLOCK INTERPOLATION               //
+//////////////////////////////////////////////////
+/*
+ For N trials, measures the number of increments made between
+ two clock edges of performance.now().
+ */
+ function calibrate() {
+  const N = 15;
+  let counter = 0, next;
+  let count = 0;
+  for (let i = 0; i < N; i++) {
+    next = wait_edge();
+    count = count_edge();
+    counter += count;
+  }
+  next = wait_edge();
+  const d1 = wait_edge() - next;
+  const d2 = counter / N;
+  const calibrated = d1 / d2;
+  return calibrated;
+}
+
+/*
+ Busy-waits until the next clock edge of performance.now().
+ */
+function wait_edge() {
+  let next, last = performance.now();
+  while((next = performance.now()) == last) {
+    // busy-wait
+  }
+  return next;
+}
+
+/*
+ The sweep counter. Increments during one performance.now() clock
+ edge as much as it can.
+ */
+function count_edge() {
+  let last = performance.now(), count = 0;
+  while (performance.now() == last) {
+    count++;
+  }
+  return count;
+}
+
 // The wasm code can be found in cachetools.wat
 // In summary, it exposes two similar functions that
 // * prime a given cache set with known values
@@ -54,7 +100,7 @@ class L1Timer {
   }
 
   _timeL1(cacheSet, clearSet) {
-    const start = performance.now();
+    const start = wait_edge();
     this.wasm.exports.oscillateTreePLRU{% if stable_timer == 'true' %}2{% endif %}({{ l1_reps }},
       cacheSet[0],
       cacheSet[1],
@@ -73,8 +119,12 @@ class L1Timer {
       clearSet[6],
       clearSet[7]
     );
-    const end = performance.now();
-    return end - start;
+    const count = count_edge();
+    const t1 = performance.now();
+    const elapsed = Math.round(t1 - start) - count * calibrate();
+    // On different runs of calibrate(), the elapsed time
+    // per sweep stays consistent up to the fourth decimal place.
+    return Number(elapsed.toFixed(4));
   }
 
   _randomPage() {

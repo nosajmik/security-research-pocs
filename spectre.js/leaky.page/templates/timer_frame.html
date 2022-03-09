@@ -70,6 +70,7 @@ for (let set = 0; set < CACHE_LINES_PER_PAGE; set++) {
   cacheSetTimings[set] = benchmark.timeCacheSet(set);
 }
 const fastSet = indexOfMin(cacheSetTimings);
+console.log(fastSet);
 
 const testReps = {{ test_reps }};
 const hits = new Array(testReps);
